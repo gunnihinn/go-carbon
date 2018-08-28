@@ -395,6 +395,9 @@ func (app *App) Start() (err error) {
 			return
 		}
 
+		// We mean carbonserver, the package, here
+		carbonserver.InitBlacklistHandler(core)
+
 		carbonserver := carbonserver.NewCarbonserverListener(core.Get)
 		carbonserver.SetWhisperData(conf.Whisper.DataDir)
 		carbonserver.SetMaxGlobs(conf.Carbonserver.MaxGlobs)

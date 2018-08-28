@@ -7,6 +7,7 @@ Based on https://github.com/orcaman/concurrent-map
 import (
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,8 @@ type Cache struct {
 
 	settings atomic.Value // cacheSettings
 
+	blacklist map[string]struct{}
+
 	stat struct {
 		size                int32  // changing via atomic
 		queueBuildCnt       uint32 // number of times writeout queue was built
@@ -54,6 +57,7 @@ type Cache struct {
 		overflowCnt         uint32 // drop packages if cache full
 		queryCnt            uint32 // number of queries
 		tagsNormalizeErrors uint32 // tags normalize errors count
+		blacklistDropCnt    uint32 // drop blacklisted metric prefixes
 	}
 }
 
@@ -70,6 +74,7 @@ func New() *Cache {
 	c := &Cache{
 		data:          make([]*Shard, shardCount),
 		writeStrategy: Noop,
+		blacklist:     make(map[string]struct{}),
 	}
 
 	for i := 0; i < shardCount; i++ {
@@ -124,6 +129,56 @@ func (c *Cache) SetTagsEnabled(value bool) {
 	c.settings.Store(&newSettings)
 }
 
+func (c *Cache) Blacklist() []string {
+	c.Lock()
+	defer c.Unlock()
+
+	prefixes := make([]string, 0, len(c.blacklist))
+	for k := range c.blacklist {
+		prefixes = append(prefixes, k)
+	}
+
+	return prefixes
+}
+
+func (c *Cache) AllowPrefixes(prefixes ...string) {
+	c.Lock()
+	defer c.Unlock()
+
+	for _, prefix := range prefixes {
+		delete(c.blacklist, prefix)
+	}
+}
+
+func (c *Cache) ClearBlacklist() {
+	c.Lock()
+	defer c.Unlock()
+
+	c.blacklist = make(map[string]struct{})
+}
+
+func (c *Cache) DenyPrefixes(prefixes ...string) {
+	c.Lock()
+	defer c.Unlock()
+
+	for _, prefix := range prefixes {
+		c.blacklist[prefix] = struct{}{}
+	}
+}
+
+func (c *Cache) IsAllowed(metric string) bool {
+	c.Lock()
+	defer c.Unlock()
+
+	for prefix := range c.blacklist {
+		if strings.HasPrefix(metric, prefix) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (c *Cache) Stop() {}
 
 // Collect cache metrics
@@ -141,6 +196,8 @@ func (c *Cache) Stat(send helper.StatCallback) {
 	helper.SendAndSubstractUint32("queueBuildCount", &c.stat.queueBuildCnt, send)
 	helper.SendAndSubstractUint32("queueBuildTimeMs", &c.stat.queueBuildTimeMs, send)
 	helper.SendUint32("queueWriteoutTime", &c.stat.queueWriteoutTime, send)
+
+	helper.SendUint32("blacklistDropCount", &c.stat.blacklistDropCnt, send)
 }
 
 // hash function
@@ -236,6 +293,11 @@ func (c *Cache) Add(p *points.Points) {
 
 	if s.xlog != nil {
 		p.WriteTo(s.xlog)
+		return
+	}
+
+	if !c.IsAllowed(p.Metric) {
+		atomic.AddUint32(&c.stat.blacklistDropCnt, 1)
 		return
 	}
 

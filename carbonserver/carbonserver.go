@@ -107,6 +107,7 @@ var TraceHeaders = map[string]string{
 }
 
 var statusCodes = map[string][]uint64{
+	"blacklist":    make([]uint64, 5),
 	"combined":     make([]uint64, 5),
 	"find":         make([]uint64, 5),
 	"list":         make([]uint64, 5),
@@ -428,9 +429,9 @@ func (listener *CarbonserverListener) updateFileList(dir string) {
 				metricsKnown++
 				trimmedName = strings.Replace(trimmedName[1:len(trimmedName)-4], "/", ".", -1)
 				details[trimmedName] = &protov3.MetricDetails{
-					Size_:   i.Size,
-					ModTime: i.MTime,
-					ATime:   i.ATime,
+					Size_:    i.Size,
+					ModTime:  i.MTime,
+					ATime:    i.ATime,
 					RealSize: i.RealSize,
 				}
 			}
@@ -849,6 +850,7 @@ func (listener *CarbonserverListener) Listen(listen string) error {
 			),
 		)
 	}
+	carbonserverMux.HandleFunc("/_internal/blacklist/", wrapHandler(listener.blacklistHandler, statusCodes["blacklist"]))
 	carbonserverMux.HandleFunc("/_internal/capabilities/", wrapHandler(listener.capabilityHandler, statusCodes["capabilities"]))
 	carbonserverMux.HandleFunc("/metrics/find/", wrapHandler(listener.findHandler, statusCodes["find"]))
 	carbonserverMux.HandleFunc("/metrics/list/", wrapHandler(listener.listHandler, statusCodes["list"]))
