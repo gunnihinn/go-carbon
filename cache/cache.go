@@ -7,6 +7,7 @@ Based on https://github.com/orcaman/concurrent-map
 import (
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,8 @@ type Cache struct {
 	settings atomic.Value // cacheSettings
 
 	blacklist map[string]struct{}
+
+	firehose net.Conn
 
 	stat struct {
 		size                int32  // changing via atomic
@@ -287,6 +290,33 @@ func (c *Cache) DivertToXlog(w io.Writer) {
 	c.settings.Store(&newSettings)
 }
 
+// StartFirehose writes all incoming (metric, value, timestamp) triples to
+// firehose. Using a UDP connection is recommended. Each write has a 1
+// millisecond timeout.
+func (c *Cache) StartFirehose(firehose net.Conn) {
+	if firehose == nil {
+		return
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	c.firehose = firehose
+}
+
+// StopFirehose stops writing to the firehose.
+func (c *Cache) StopFirehose() {
+	if c.firehose == nil {
+		return
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	c.firehose.Close()
+	c.firehose = nil
+}
+
 // Sets the given value under the specified key.
 func (c *Cache) Add(p *points.Points) {
 	s := c.settings.Load().(*cacheSettings)
@@ -294,6 +324,12 @@ func (c *Cache) Add(p *points.Points) {
 	if s.xlog != nil {
 		p.WriteTo(s.xlog)
 		return
+	}
+
+	if c.firehose != nil {
+		deadline := time.Now().Add(time.Millisecond)
+		c.firehose.SetDeadline(deadline)
+		p.WriteTo(c.firehose)
 	}
 
 	if !c.IsAllowed(p.Metric) {

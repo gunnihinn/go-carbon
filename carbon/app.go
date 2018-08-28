@@ -157,9 +157,29 @@ func (app *App) ReloadConfig() error {
 		app.Collector = nil
 	}
 
+	app.Cache.StopFirehose()
+
+	if app.Config.Common.FirehoseAddr != "" {
+		firehose := connectFirehose(app.Config.Common.FirehoseAddr)
+		app.Cache.StartFirehose(firehose)
+	}
+
 	app.Collector = NewCollector(app)
 
 	return nil
+}
+
+func connectFirehose(address string) net.Conn {
+	firehose, err := net.Dial("udp", address)
+	if err != nil {
+		logger := zapwriter.Logger("app")
+		logger.Warn("Couldn't setup firehose",
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	return firehose
 }
 
 // Stop all socket listeners
@@ -186,6 +206,8 @@ func (app *App) stopListeners() {
 		}()
 		app.Carbonserver = nil
 	}
+
+	app.Cache.StopFirehose()
 
 	if app.Receivers != nil {
 		for i := 0; i < len(app.Receivers); i++ {
@@ -320,6 +342,11 @@ func (app *App) Start() (err error) {
 	/* WHISPER and TAGS start */
 	app.startPersister()
 	/* WHISPER and TAGS end */
+
+	if conf.Common.FirehoseAddr != "" {
+		firehose := connectFirehose(conf.Common.FirehoseAddr)
+		app.Cache.StartFirehose(firehose)
+	}
 
 	app.Receivers = make([]*NamedReceiver, 0)
 	var rcv receiver.Receiver

@@ -50,6 +50,7 @@ type commonConfig struct {
 	MetricInterval *Duration `toml:"metric-interval"`
 	MetricEndpoint string    `toml:"metric-endpoint"`
 	MaxCPU         int       `toml:"max-cpu"`
+	FirehoseAddr   string    `toml:"firehose-udp-address"`
 }
 
 type whisperConfig struct {
